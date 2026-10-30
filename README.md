@@ -31,7 +31,7 @@ Provider usage windows come from bb's built-in Provider usage plugin. Account e-
 ## Install
 
 ```
-bb plugin install github:<owner>/bb-plugin-otel
+bb plugin install github:lanjak/bb-plugin-otel
 bb plugin config otel set endpoint http://collector:4318
 bb plugin config otel set headers 'x-otlp-token=SECRET'
 ```

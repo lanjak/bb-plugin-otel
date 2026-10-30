@@ -4,7 +4,17 @@
   "description": "Export OpenTelemetry (OTLP/HTTP) from bb: turn spans, GenAI token and cost metrics, thread links and provider usage windows. Never exports prompt, response or tool text.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["bb-plugin", "opentelemetry", "otlp", "observability", "genai"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lanjak/bb-plugin-otel.git"
+  },
+  "keywords": [
+    "bb-plugin",
+    "opentelemetry",
+    "otlp",
+    "observability",
+    "genai"
+  ],
   "engines": {
     "bb": ">=0.46",
     "bbPluginSdk": ">=0.6.49"
@@ -16,7 +26,9 @@
       "icon": "./assets/icon.svg"
     },
     "server": "./server.ts",
-    "skills": ["skills"]
+    "skills": [
+      "skills"
+    ]
   },
   "scripts": {
     "build": "bb plugin build",
