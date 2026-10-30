@@ -1,17 +1,17 @@
-# OpenTelemetry
-
-Send what your agents do to the observability stack you already run.
-
 ## What you get
 
 - One span for each finished turn, with model, token counts, cache tokens and cost, in GenAI semantic-convention attributes.
-- Thread, project and environment ids on every span. A delegated thread joins the trace of its parent.
+- Thread, project and environment ids, plus the project name, on every span. A delegated thread joins the trace of its parent.
 - Token, cost, duration and thread-lifecycle metrics.
 - Provider quota windows (used percent, reset time) as gauges.
 
 ## Privacy
 
 The plugin never exports prompts, replies, tool input or output, thread titles, file paths or error messages. There is no setting to turn that on.
+
+## Requirements
+
+An OpenTelemetry collector that you run and that accepts OTLP/HTTP.
 
 ## Set up
 
