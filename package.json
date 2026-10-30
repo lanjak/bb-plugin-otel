@@ -1,0 +1,37 @@
+{
+  "name": "bb-plugin-otel",
+  "version": "0.1.0",
+  "description": "Export OpenTelemetry (OTLP/HTTP) from bb: turn spans, GenAI token and cost metrics, thread links and provider usage windows. Never exports prompt, response or tool text.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["bb-plugin", "opentelemetry", "otlp", "observability", "genai"],
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "OpenTelemetry",
+    "description": "Export per-turn spans, GenAI token and cost metrics and provider usage windows over OTLP/HTTP. Never exports prompt, response or tool text.",
+    "branding": {
+      "icon": "./assets/icon.svg"
+    },
+    "server": "./server.ts",
+    "skills": ["skills"]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.68",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.1"
+  }
+}
