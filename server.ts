@@ -2,9 +2,10 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { fold, newState, USAGE_EVENT_TYPES, type EventRow, type ThreadState } from "./src/fold.js";
 import { makePost, parseKeyValues, tracesBody, type Attrs, type Post } from "./src/otlp.js";
+import { accountHashOf } from "./src/ids.js";
 import { setUsageGauges, Telemetry, type ThreadCtx, type UsageWindowInput } from "./src/telemetry.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const PAGE = 100;
 const MAX_DEPTH = 8;
 const USAGE_PLUGIN = "bb--provider-usage";
@@ -19,6 +20,7 @@ const usageSchema = z.object({
           usage: z
             .object({
               status: z.string(),
+              accountEmail: z.string().nullable().optional(),
               planLabel: z.string().nullable().optional(),
               windows: z
                 .array(
@@ -59,6 +61,12 @@ export default async function plugin(bb: BbPluginApi) {
     usageWindows: { type: "boolean", label: "Export provider usage windows", default: true },
     flushSeconds: { type: "number", label: "Flush interval (seconds)", default: 10, experimental_schema: z.number().int().min(1).max(3600) },
     usagePollSeconds: { type: "number", label: "Usage poll interval (seconds)", default: 300, experimental_schema: z.number().int().min(30).max(86400) },
+    metricsRefreshSeconds: {
+      type: "number",
+      label: "Full metrics refresh (seconds, 0 = only changed series)",
+      default: 3600,
+      experimental_schema: z.number().int().min(0).max(86400),
+    },
   });
 
   let cfg = await settings.get();
@@ -96,6 +104,35 @@ export default async function plugin(bb: BbPluginApi) {
     return projectNames.get(id);
   };
 
+  // Machine names by host id, and host ids by environment id. Hosts are few; the list is
+  // read again at most once a minute when an unknown id turns up.
+  const hostNames = new Map<string, string>();
+  const envHosts = new Map<string, string | null>();
+  let hostsReadAt = 0;
+  const hostName = async (hostId: string) => {
+    if (!hostNames.has(hostId) && Date.now() - hostsReadAt > 60_000) {
+      hostsReadAt = Date.now();
+      const hosts = await Promise.resolve()
+        .then(() => bb.sdk.hosts.list())
+        .catch(() => []);
+      for (const h of hosts as { id?: unknown; name?: unknown }[])
+        if (typeof h.id === "string" && typeof h.name === "string") hostNames.set(h.id, h.name);
+    }
+    return hostNames.get(hostId);
+  };
+  const hostOf = async (environmentId: string | null) => {
+    if (!environmentId) return null;
+    if (!envHosts.has(environmentId)) {
+      const env = await Promise.resolve()
+        .then(() => bb.sdk.environments.get({ environmentId }))
+        .catch(() => undefined);
+      const id = (env as { hostId?: unknown } | undefined)?.hostId;
+      if (env) envHosts.set(environmentId, typeof id === "string" ? id : null);
+      return typeof id === "string" ? id : null;
+    }
+    return envHosts.get(environmentId) ?? null;
+  };
+
   type Thread = {
     id: string;
     projectId: string;
@@ -114,7 +151,10 @@ export default async function plugin(bb: BbPluginApi) {
       root = parent;
       parent = (ctxs.get(parent)?.parentThreadId ?? (await bb.sdk.threads.get({ threadId: parent }).catch(() => null))?.parentThreadId) ?? null;
     }
+    const machineId = (await hostOf(t.environmentId)) ?? undefined;
     const c: ThreadCtx = {
+      machineId,
+      machineName: machineId ? await hostName(machineId) : undefined,
       threadId: t.id,
       projectId: t.projectId,
       projectName: await projectName(t.projectId),
@@ -201,6 +241,7 @@ export default async function plugin(bb: BbPluginApi) {
     );
 
   let lastError = "";
+  let nextFull = Date.now() + cfg.metricsRefreshSeconds * 1000;
   async function flush() {
     if (!post) return;
     let failure: unknown;
@@ -213,7 +254,20 @@ export default async function plugin(bb: BbPluginApi) {
           throw e;
         }
       }
-      if (cfg.metrics && !tel.meter.empty) await post("/v1/metrics", tel.meter.body(resource, VERSION, Date.now()));
+      if (cfg.metrics) {
+        const now = Date.now();
+        const full = cfg.metricsRefreshSeconds > 0 && now >= nextFull;
+        const out = tel.meter.collect(resource, VERSION, now, full);
+        if (out) {
+          try {
+            await post("/v1/metrics", out.body);
+          } catch (e) {
+            tel.meter.restore(out.keys);
+            throw e;
+          }
+          if (full) nextFull = now + cfg.metricsRefreshSeconds * 1000;
+        }
+      }
       lastError = "";
     } catch (e) {
       failure = e;
@@ -233,11 +287,15 @@ export default async function plugin(bb: BbPluginApi) {
       outputSchema: usageSchema,
       signal: AbortSignal.timeout(45_000),
     });
+    const names = new Map<string, string | undefined>();
+    for (const m of snapshot.machines) names.set(m.id, await hostName(m.id));
     const windows: UsageWindowInput[] = snapshot.machines.flatMap((m) =>
       m.providers.flatMap((p) =>
         p.usage?.status === "ok"
           ? (p.usage.windows ?? []).map((w) => ({
               machineId: m.id,
+              machineName: names.get(m.id),
+              accountHash: p.usage?.accountEmail ? accountHashOf(p.usage.accountEmail) : undefined,
               providerId: p.providerId,
               planLabel: p.usage?.planLabel ?? null,
               label: w.label,

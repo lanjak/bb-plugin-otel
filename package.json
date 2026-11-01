@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-otel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Export OpenTelemetry (OTLP/HTTP) from bb: turn spans, GenAI token and cost metrics, thread links and provider usage windows. Never exports prompt, response or tool text.",
   "type": "module",
   "license": "MIT",

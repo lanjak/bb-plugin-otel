@@ -22,6 +22,7 @@ bb plugin config otel set resourceAttributes 'deployment.environment=home'
 | `resourceAttributes` | `name=value,name=value`, added to the resource. |
 | `traces`, `metrics`, `usageWindows` | Switch one signal off. |
 | `flushSeconds`, `usagePollSeconds` | Send and quota poll intervals. |
+| `metricsRefreshSeconds` | How often every metric series is sent again (default 3600, 0 = never). Between refreshes only changed series are sent. |
 
 ## Check
 

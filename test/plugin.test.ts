@@ -54,6 +54,8 @@ async function setup(url: string, settings: Record<string, unknown> = {}, events
     onDispose: (f: () => unknown) => (disposeHook = f),
     sdk: {
       projects: { get: async () => ({ name: "personal" }) },
+      hosts: { list: async () => [{ id: "host_a", name: "rufipc" }, { id: "m1", name: "box" }] },
+      environments: { get: async ({ environmentId }: { environmentId: string }) => ({ id: environmentId, hostId: "host_a" }) },
       threads: {
         get: async ({ threadId }: { threadId: string }) => thread(threadId, threadId === "child" ? { parentThreadId: "root" } : {}),
         events: {
@@ -118,7 +120,10 @@ describe("plugin", () => {
       "bb.thread.id": "t1", "bb.project.id": "proj_1", "bb.project.name": "personal", "session.id": "sess-1",
       "gen_ai.request.model": "claude-x", "gen_ai.usage.input_tokens": "100", "gen_ai.usage.output_tokens": "30",
       "gen_ai.usage.cache_read.input_tokens": "20", "bb.turn.status": "failed",
+      "bb.machine.id": "host_a", "bb.machine.name": "rufipc",
     });
+    const turns = metrics.body.resourceMetrics[0].scopeMetrics[0].metrics.find((m: any) => m.name === "bb.turns");
+    expect(attrs(turns.sum.dataPoints[0])).toMatchObject({ "bb.machine.name": "rufipc" });
     const names = metrics.body.resourceMetrics[0].scopeMetrics[0].metrics.map((m: any) => m.name);
     expect(names).toEqual(expect.arrayContaining(["gen_ai.client.token.usage", "gen_ai.client.operation.duration", "bb.gen_ai.client.cost", "bb.thread.transitions"]));
     // Privacy: prompt, reply, error text and the thread title appear nowhere on the wire.
@@ -166,7 +171,41 @@ describe("plugin", () => {
     const m = c.hits.find((h) => h.path === "/v1/metrics")!.body.resourceMetrics[0].scopeMetrics[0].metrics;
     const g = m.find((x: any) => x.name === "bb.provider.usage.used_percent").gauge.dataPoints[0];
     expect(g.asDouble).toBe(42);
+    const ga = Object.fromEntries(g.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]));
+    expect(ga["bb.machine.name"]).toBe("box");
+    expect(ga["bb.provider.account"]).toMatch(/^[0-9a-f]{12}$/);
     expect(JSON.stringify(c.hits)).not.toContain("example.com");
+    expect(JSON.stringify(c.hits)).not.toContain("me@");
+  });
+
+  it("sends only changed metric series, and every series on a full refresh", async () => {
+    const c = await collector();
+    closers.push(c.close);
+    const p = await setup(c.url, { metricsRefreshSeconds: 0 }, { t1: turnEvents() });
+    await p.emit("thread.idle", thread("t1"));
+    await p.flush();
+    expect(c.hits.filter((h) => h.path === "/v1/metrics")).toHaveLength(1);
+    c.hits.length = 0;
+    await p.flush();
+    expect(c.hits.filter((h) => h.path === "/v1/metrics")).toHaveLength(0);
+    await p.emit("thread.created", thread("t2"));
+    await p.flush();
+    const sent = c.hits.find((h) => h.path === "/v1/metrics")!.body.resourceMetrics[0].scopeMetrics[0].metrics;
+    expect(sent.map((m: any) => m.name)).toEqual(["bb.thread.transitions"]);
+    expect(sent[0].sum.dataPoints).toHaveLength(1);
+  });
+
+  it("keeps changed series when the metrics export fails", async () => {
+    const c = await collector(503);
+    closers.push(c.close);
+    const p = await setup(c.url, { metricsRefreshSeconds: 0, traces: false }, { t1: turnEvents() });
+    await p.emit("thread.idle", thread("t1"));
+    await p.flush();
+    c.setStatus(200);
+    c.hits.length = 0;
+    await p.flush();
+    const names = c.hits.find((h) => h.path === "/v1/metrics")!.body.resourceMetrics[0].scopeMetrics[0].metrics.map((m: any) => m.name);
+    expect(names).toEqual(expect.arrayContaining(["bb.turns", "gen_ai.client.token.usage"]));
   });
 
   it("keeps spans when the collector fails and delivers them on the next flush", async () => {

@@ -85,12 +85,17 @@ export interface MetricMeta {
   description: string;
 }
 
-/** Cumulative in-memory metrics, exported whole on each flush. */
+/**
+ * Cumulative in-memory metrics. A flush exports only the series that changed since the
+ * last delivered export, or every series when `full` is set (a periodic refresh), so an
+ * idle bb sends nothing.
+ */
 export class Meter {
   private sums = new Map<string, SumSeries>();
   private hists = new Map<string, HistSeries>();
   private gauges = new Map<string, GaugeSeries>();
   private meta = new Map<string, MetricMeta>();
+  private changed = new Set<string>();
   readonly startMs = Date.now();
 
   describe(name: string, unit: string, description: string) {
@@ -104,6 +109,7 @@ export class Meter {
     const s = this.sums.get(k) ?? { name, attrs, value: 0 };
     s.value += value;
     this.sums.set(k, s);
+    this.changed.add(k);
   }
   record(name: string, attrs: Attrs, value: number, bounds: readonly number[]) {
     const k = this.key(name, attrs);
@@ -114,23 +120,43 @@ export class Meter {
     if (i < 0) i = bounds.length;
     h.buckets[i]! += 1;
     this.hists.set(k, h);
+    this.changed.add(k);
   }
   /** Replaces every gauge of `name` so that a window that vanished stops being reported. */
   setGauges(name: string, points: readonly { attrs: Attrs; value: number }[]) {
     for (const [k, g] of this.gauges) if (g.name === name) this.gauges.delete(k);
-    for (const p of points) this.gauges.set(this.key(name, p.attrs), { name, attrs: p.attrs, value: p.value });
+    for (const p of points) {
+      const k = this.key(name, p.attrs);
+      this.gauges.set(k, { name, attrs: p.attrs, value: p.value });
+      this.changed.add(k);
+    }
   }
   get empty() {
     return this.sums.size + this.hists.size + this.gauges.size === 0;
   }
 
-  body(resource: Attrs, version: string, nowMs: number) {
+  /**
+   * Takes the series to export: the changed ones, or all when `full`. Returns null when
+   * there is nothing to send. Call `restore` with the keys when delivery fails.
+   */
+  collect(resource: Attrs, version: string, nowMs: number, full: boolean): { body: ReturnType<Meter["body"]>; keys: string[] } | null {
+    const keys = full ? [...this.sums.keys(), ...this.hists.keys(), ...this.gauges.keys()] : [...this.changed];
+    if (keys.length === 0) return null;
+    const pick = new Set(keys);
+    this.changed.clear();
+    return { body: this.body(resource, version, nowMs, (k) => pick.has(k)), keys };
+  }
+  restore(keys: readonly string[]) {
+    for (const k of keys) if (this.sums.has(k) || this.hists.has(k) || this.gauges.has(k)) this.changed.add(k);
+  }
+
+  body(resource: Attrs, version: string, nowMs: number, include: (key: string) => boolean = () => true) {
     const start = nano(this.startMs);
     const now = nano(nowMs);
     const info = (name: string) => ({ name, unit: this.meta.get(name)?.unit ?? "", description: this.meta.get(name)?.description ?? "" });
     const byName = <T extends Series>(m: Map<string, T>) => {
       const out = new Map<string, T[]>();
-      for (const s of m.values()) out.set(s.name, [...(out.get(s.name) ?? []), s]);
+      for (const [k, s] of m) if (include(k)) out.set(s.name, [...(out.get(s.name) ?? []), s]);
       return out;
     };
     const metrics: unknown[] = [];

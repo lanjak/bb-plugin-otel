@@ -11,3 +11,6 @@ export const threadSpanIdOf = (threadId: string): string => hex(`bb-thread:${thr
 
 export const turnSpanIdOf = (threadId: string, startedAt: number, seq: number): string =>
   hex(`bb-turn:${threadId}:${startedAt}:${seq}`, 8);
+
+/** A stable label for a provider account that does not reveal the login. */
+export const accountHashOf = (login: string): string => hex(`bb-account:${login.trim().toLowerCase()}`, 6);

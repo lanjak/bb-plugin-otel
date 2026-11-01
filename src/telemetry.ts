@@ -11,6 +11,9 @@ export interface ThreadCtx {
   parentThreadId: string | null;
   rootThreadId: string;
   originPluginId: string | null;
+  /** The bb machine (host) the thread's environment runs on, when known. */
+  machineId?: string;
+  machineName?: string;
 }
 
 export interface Enabled {
@@ -47,6 +50,8 @@ export class Telemetry {
       "bb.project.id": c.projectId,
       "bb.project.name": c.projectName,
       "bb.environment.id": c.environmentId ?? undefined,
+      "bb.machine.id": c.machineId,
+      "bb.machine.name": c.machineName,
       "bb.provider.id": c.providerId,
       "bb.parent_thread.id": c.parentThreadId ?? undefined,
       "bb.root_thread.id": c.rootThreadId,
@@ -94,6 +99,7 @@ export class Telemetry {
       "gen_ai.provider.name": VENDOR[c.providerId],
       "bb.provider.id": c.providerId,
       "bb.project.id": c.projectId,
+      "bb.machine.name": c.machineName,
     };
     const m = this.meter;
     m.record("gen_ai.client.token.usage", { ...base, "gen_ai.token.type": "input" }, t.tokens.input, TOKEN_BOUNDS);
@@ -108,11 +114,11 @@ export class Telemetry {
   /** A thread lifecycle event; `activeMs` is set when an active stretch ended. */
   lifecycle(c: ThreadCtx, state: string, activeMs?: number) {
     if (!this.isEnabled().metrics) return;
-    const a: Attrs = { "bb.thread.state": state, "bb.provider.id": c.providerId, "bb.project.id": c.projectId };
-    this.meter.add("bb.thread.transitions", a, 1);
-    if (activeMs !== undefined) this.meter.record("bb.thread.active.duration", { "bb.provider.id": c.providerId, "bb.project.id": c.projectId }, activeMs / 1000, DURATION_BOUNDS);
+    const where: Attrs = { "bb.provider.id": c.providerId, "bb.project.id": c.projectId, "bb.machine.name": c.machineName };
+    this.meter.add("bb.thread.transitions", { ...where, "bb.thread.state": state }, 1);
+    if (activeMs !== undefined) this.meter.record("bb.thread.active.duration", where, activeMs / 1000, DURATION_BOUNDS);
     if (c.originPluginId === "automations" && (state === "idle" || state === "failed"))
-      this.meter.add("bb.automation.runs", { "bb.thread.state": state, "bb.project.id": c.projectId }, 1);
+      this.meter.add("bb.automation.runs", { "bb.thread.state": state, "bb.project.id": c.projectId, "bb.machine.name": c.machineName }, 1);
   }
 
   /** The thread's own span, children of its parent's span; sent once when it is archived or deleted. */
@@ -132,6 +138,9 @@ export class Telemetry {
 
 export interface UsageWindowInput {
   machineId: string;
+  machineName?: string;
+  /** A one-way hash of the account login, never the login itself. */
+  accountHash?: string;
   providerId: string;
   planLabel: string | null;
   label: string;
@@ -140,10 +149,12 @@ export interface UsageWindowInput {
   cost: { usedUsdCents: number; limitUsdCents: number } | null;
 }
 
-/** Sets the provider quota gauges. Account email and display names are not exported. */
+/** Sets the provider quota gauges. The account email is not exported, only a hash of it. */
 export function setUsageGauges(meter: Meter, windows: readonly UsageWindowInput[]) {
   const attrs = (w: UsageWindowInput): Attrs => ({
     "bb.machine.id": w.machineId,
+    "bb.machine.name": w.machineName,
+    "bb.provider.account": w.accountHash,
     "bb.provider.id": w.providerId,
     "bb.provider.plan": w.planLabel ?? undefined,
     "bb.usage.window": w.label,
